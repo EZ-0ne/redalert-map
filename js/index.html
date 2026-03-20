@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="night">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Red Alert LED Map</title>
+<link rel="manifest" href="/redalert-map/manifest.json">
+<meta name="theme-color" content="#ff3333">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<style>
+:root,[data-theme="night"]{
+  --bg:#0d0d0d;--bg2:#1a1a1a;--bg3:#111;--bdr:#333;
+  --txt:#e0e0e0;--txt2:#aaa;--txt3:#666;
+  --ac:#ff3333;--ac2:#ffcc00;
+  --badge-bg:#222;--card-bg:#1a1a1a;
+  --inp-bg:#111;--inp-bdr:#444;--inp-txt:#e0e0e0;
+  --btn-grey:#333;--btn-grey-txt:#ccc;
+}
+[data-theme="day"]{
+  --bg:#f0f2f5;--bg2:#fff;--bg3:#f7f8fa;--bdr:#d0d4db;
+  --txt:#1a1a2e;--txt2:#4a4a6a;--txt3:#999;
+  --ac:#c0392b;--ac2:#c0392b;
+  --badge-bg:#e8eaf0;--card-bg:#fff;
+  --inp-bg:#fff;--inp-bdr:#bdc3cc;--inp-txt:#1a1a2e;
+  --btn-grey:#dde0e8;--btn-grey-txt:#444;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px}
+.wrap{max-width:960px;margin:0 auto;padding:14px}
+.hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+.logo{font-size:20px;font-weight:700}.logo .ra{color:#ff3333}
+.ver{color:var(--txt3);font-size:11px;margin-left:6px}
+.hdr-right{display:flex;align-items:center;gap:10px}
+#clock{color:var(--ac2);font-size:22px;font-weight:700;letter-spacing:1px}
+.theme-btn{padding:5px 12px;border-radius:20px;border:1px solid var(--bdr);background:var(--bg3);color:var(--txt2);font-size:12px;cursor:pointer;font-weight:600}
+
+/* Device IP bar */
+.ip-bar{display:flex;gap:8px;align-items:center;margin-bottom:12px;background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;padding:8px 12px}
+.ip-bar input{flex:1;background:var(--inp-bg);border:1px solid var(--inp-bdr);border-radius:5px;color:var(--inp-txt);padding:5px 8px;font-size:13px}
+.ip-bar label{font-size:12px;color:var(--txt2);white-space:nowrap}
+
+/* Status bars */
+.sbar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.badge{border-radius:12px;padding:3px 10px;font-size:12px;font-weight:600;background:var(--badge-bg)}
+.b-idle{color:#00cc00}.b-alert{color:#ff3333}.b-boot{color:#aaa}
+.b-disc{color:#3399ff}.b-ota{color:#ff9900}.b-ok{color:#00cc00}
+.b-warn{color:#ffcc00}.b-err{color:#ff4444}
+
+/* Tabs */
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--bdr);margin-bottom:14px;overflow-x:auto}
+.tab{padding:9px 18px;cursor:pointer;font-size:13px;font-weight:600;border-bottom:2px solid transparent;color:var(--txt2);white-space:nowrap}
+.tab.act{color:var(--ac);border-bottom-color:var(--ac)}
+.tab-panel{display:block}.tab-panel.hidden{display:none}
+
+/* Cards */
+.card{background:var(--card-bg);border:1px solid var(--bdr);border-radius:12px;margin-bottom:14px;padding:16px}
+.card-title{font-size:13px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+
+/* Forms */
+label{display:block;color:var(--txt2);font-size:12px;margin-bottom:3px;margin-top:10px}
+label:first-child{margin-top:0}
+input[type=text],input[type=password],input[type=number],select{
+  width:100%;padding:8px 10px;background:var(--inp-bg);border:1px solid var(--inp-bdr);
+  border-radius:6px;color:var(--inp-txt);font-size:14px}
+input[type=file]{color:var(--txt2);font-size:13px;margin-top:4px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tworow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:560px){.tworow{grid-template-columns:1fr}}
+
+/* Buttons */
+.btn{display:inline-block;padding:8px 18px;border-radius:8px;border:none;cursor:pointer;font-size:14px;font-weight:600;transition:.15s}
+.btn-red{background:#c0392b;color:#fff}.btn-blue{background:#1a5fd4;color:#fff}
+.btn-green{background:#1a7a30;color:#fff}.btn-yellow{background:var(--ac2);color:#111}
+.btn-grey{background:var(--btn-grey);color:var(--btn-grey-txt)}
+.btn-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+
+/* Mode selector */
+.mode-sel{display:flex;border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-top:6px}
+.mode-btn{flex:1;padding:7px 0;text-align:center;cursor:pointer;font-size:13px;font-weight:600;color:var(--txt2);background:var(--bg3);border:none}
+.mode-btn.act{background:var(--ac2);color:#111}
+
+/* Chips */
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;min-height:28px}
+.chip{background:var(--bg3);border:1px solid var(--bdr);border-radius:20px;padding:4px 10px;font-size:13px;display:flex;align-items:center;gap:5px}
+.chip-x{cursor:pointer;color:#ff5555;font-weight:700;font-size:15px;line-height:1}
+
+/* Autocomplete */
+.ac-wrap{position:relative}
+.ac-drop{position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--bdr);border-radius:0 0 8px 8px;z-index:99;max-height:200px;overflow-y:auto;display:none}
+.ac-item{padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--bdr);color:var(--txt)}
+.ac-item:hover{background:var(--bg3)}
+
+/* LED Map grid */
+.led-grid{display:flex;flex-wrap:wrap;gap:3px;margin-top:10px}
+.led-cell{width:14px;height:14px;border-radius:3px;cursor:pointer;transition:.2s;background:#1a2a1a}
+.led-cell:hover{transform:scale(1.4)}
+.led-idle{background:#0a3a0a}.led-alert{background:#cc0000}
+.led-disc{background:#0a0a3a}.led-ota{background:#3a2a00}
+.no-map{color:var(--txt3);font-size:13px;padding:20px 0}
+
+/* Log box */
+.logbox{background:var(--bg3);border-radius:6px;padding:10px;font-size:12px;font-family:monospace;max-height:320px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;line-height:1.6;margin-top:8px}
+
+/* History */
+.hist-row{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--bdr);font-size:13px}
+.hist-type{font-weight:700;min-width:90px}
+.hist-city{flex:1;color:var(--txt2)}
+.hist-led{color:var(--txt3);font-size:12px}
+.threat-0{color:#ff3333}.threat-1{color:#ff9900}.threat-2{color:#ffcc00}
+.threat-3{color:#3399ff}.threat-4{color:#cc44ff}.threat-5{color:#ff3366}.threat-6{color:#33cc66}
+.loading,.empty,.error{color:var(--txt3);font-size:13px;padding:16px 0}
+
+/* OTA progress */
+#otaBar{display:none;margin-top:10px;background:var(--badge-bg);border-radius:4px;height:6px;overflow:hidden}
+#otaFill{height:100%;background:var(--ac2);width:0;transition:width .3s}
+
+/* Toggle switch */
+.toggle-row{display:flex;align-items:center;justify-content:space-between;margin-top:10px}
+.toggle-row label{margin:0}
+.switch{position:relative;display:inline-block;width:44px;height:24px}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;cursor:pointer;inset:0;background:#333;border-radius:24px;transition:.3s}
+.slider:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+input:checked+.slider{background:var(--ac)}
+input:checked+.slider:before{transform:translateX(20px)}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:#333;color:#fff;padding:10px 20px;border-radius:24px;font-size:14px;font-weight:600;opacity:0;transition:.3s;z-index:999;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.ftr{text-align:center;color:var(--txt3);font-size:12px;padding:20px 0 10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- Header -->
+<div class="hdr">
+  <div>
+    <span class="logo"><span class="ra">Red Alert </span>LED Map</span>
+    <span class="ver" id="fwVer">PWA v1.0.0</span>
+  </div>
+  <div class="hdr-right">
+    <div id="clock">--:--:-- --</div>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">☀ Day</button>
+  </div>
+</div>
+
+<!-- Device IP -->
+<div class="ip-bar">
+  <label>ESP32 IP:</label>
+  <input type="text" id="deviceIP" placeholder="192.168.1.xxx" onchange="setDeviceIP()">
+  <button class="btn btn-grey" style="padding:5px 12px;font-size:13px" onclick="setDeviceIP()">Connect</button>
+  <span class="badge b-err" id="sb-conn">● Connecting...</span>
+</div>
+
+<!-- Status badges -->
+<div class="sbar">
+  <span class="badge b-boot" id="sb-state">STATE: —</span>
+  <span class="badge" id="sb-wifi">WiFi: —</span>
+  <span class="badge" id="sb-ip">IP: —</span>
+  <span class="badge" id="sb-ntp">NTP: —</span>
+  <span class="badge" id="sb-rssi">RSSI: —</span>
+  <span class="badge" id="sb-map">Map: —</span>
+</div>
+<div class="sbar">
+  <span class="badge" id="pb-api">API: —</span>
+  <span class="badge" id="pb-ok">OK: —</span>
+  <span class="badge" id="pb-fails">Fails: —</span>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab act" data-tab="status">Status</div>
+  <div class="tab" data-tab="settings">Settings</div>
+  <div class="tab" data-tab="map">LED Map</div>
+  <div class="tab" data-tab="history">History</div>
+  <div class="tab" data-tab="log">Logs</div>
+  <div class="tab" data-tab="tools">Tools</div>
+</div>
+
+<!-- STATUS TAB -->
+<div class="tab-panel" id="panel-status">
+  <div class="card">
+    <div class="card-title">Device Overview</div>
+    <div id="overviewText" style="font-size:13px;color:var(--txt2);line-height:2">
+      Connecting to device...
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Quick Actions</div>
+    <div class="btn-row">
+      <button class="btn btn-red"   onclick="testAll('rockets')">🚀 Test Rockets</button>
+      <button class="btn btn-grey"  onclick="testAll('clear')">Clear All</button>
+      <button class="btn btn-grey"  onclick="reboot()">Reboot</button>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS TAB -->
+<div class="tab-panel hidden" id="panel-settings">
+  <div class="card">
+    <div class="card-title">WiFi</div>
+    <label>SSID</label>
+    <input type="text" id="ssid" placeholder="Network name" autocomplete="off">
+    <label>Password</label>
+    <input type="password" id="wifiPass" placeholder="Leave blank to keep current">
+    <div class="btn-row">
+      <button class="btn btn-blue" onclick="saveWifi()">Save & Connect</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Alert Settings</div>
+    <label>Poll Interval (seconds)</label>
+    <input type="number" id="pollInt" min="1" max="30" value="3">
+    <label>Alert Duration (seconds)</label>
+    <input type="number" id="alertDur" min="5" max="600" value="90">
+    <label>Blink Speed (1-50)</label>
+    <input type="number" id="blinkSpd" min="1" max="50" value="20">
+  </div>
+
+  <div class="card">
+    <div class="card-title">LED Brightness</div>
+    <label>Mode</label>
+    <div class="mode-sel">
+      <button class="mode-btn" id="bm-0" onclick="setBrightMode(0)">Day</button>
+      <button class="mode-btn" id="bm-1" onclick="setBrightMode(1)">Night</button>
+      <button class="mode-btn act" id="bm-2" onclick="setBrightMode(2)">Auto</button>
+    </div>
+    <div class="tworow" style="margin-top:10px">
+      <div><label>Day (0-255)</label><input type="number" id="sysBri" min="0" max="255" value="180"></div>
+      <div><label>Night (0-255)</label><input type="number" id="nightBri" min="0" max="255" value="30"></div>
+      <div><label>Idle (0-255)</label><input type="number" id="idleBri" min="0" max="255" value="60"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Notification LEDs (GPIO 22)</div>
+    <div class="toggle-row">
+      <label>Enable notification strip</label>
+      <label class="switch"><input type="checkbox" id="notifEnabled"><span class="slider"></span></label>
+    </div>
+    <label>LED Count</label>
+    <input type="number" id="notifCount" min="1" max="60" value="8">
+  </div>
+
+  <div class="card">
+    <div class="card-title">Speaker (GPIO 19)</div>
+    <div class="toggle-row">
+      <label>Enable speaker trigger</label>
+      <label class="switch"><input type="checkbox" id="speakerEnabled"><span class="slider"></span></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Solid-Stay Cities</div>
+    <p style="font-size:12px;color:var(--txt3);margin-bottom:8px">These cities stay lit solid instead of blinking during alerts</p>
+    <div class="ac-wrap">
+      <input type="text" id="solidCityInput" placeholder="Search city (Hebrew or English)..."
+             oninput="citySearchInput(this.value)" autocomplete="off">
+      <div class="ac-drop" id="cityDrop"></div>
+    </div>
+    <input type="hidden" id="solidCitiesHidden">
+    <div class="btn-row">
+      <button class="btn btn-blue" onclick="addSolidCity()">Add City</button>
+    </div>
+    <div class="chips" id="solidChips"></div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-yellow" onclick="saveSettings()">Save All Settings</button>
+  </div>
+</div>
+
+<!-- LED MAP TAB -->
+<div class="tab-panel hidden" id="panel-map">
+  <div class="card">
+    <div class="card-title">LED Grid — click any LED to test it</div>
+    <div class="led-grid" id="ledGrid">
+      <div class="no-map">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<!-- HISTORY TAB -->
+<div class="tab-panel hidden" id="panel-history">
+  <div class="card">
+    <div class="card-title">Alert History</div>
+    <div class="btn-row" style="margin-bottom:10px">
+      <button class="btn btn-grey" onclick="loadAlertHistory()">Refresh</button>
+      <button class="btn btn-red"  onclick="clearLog('alerthistory')">Clear History</button>
+    </div>
+    <div id="historyList"><div class="loading">Loading...</div></div>
+  </div>
+</div>
+
+<!-- LOGS TAB -->
+<div class="tab-panel hidden" id="panel-log">
+  <div class="card">
+    <div class="card-title">System Log</div>
+    <div class="btn-row" style="margin-bottom:6px">
+      <button class="btn btn-grey" onclick="loadLogs()">Refresh</button>
+      <button class="btn btn-red"  onclick="clearLog('syslog')">Clear</button>
+    </div>
+    <div class="logbox" id="syslogBox">Loading...</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Alert Log</div>
+    <div class="btn-row" style="margin-bottom:6px">
+      <button class="btn btn-grey" onclick="loadLogs()">Refresh</button>
+      <button class="btn btn-red"  onclick="clearLog('alertlog')">Clear</button>
+    </div>
+    <div class="logbox" id="alertlogBox">Loading...</div>
+  </div>
+</div>
+
+<!-- TOOLS TAB -->
+<div class="tab-panel hidden" id="panel-tools">
+  <div class="card">
+    <div class="card-title">Map Upload</div>
+    <label>Binary map file (.bin)</label>
+    <input type="file" id="mapFile" accept=".bin">
+    <div class="btn-row">
+      <button class="btn btn-green" onclick="uploadMap()">Upload Map</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Firmware OTA</div>
+    <label>Firmware .bin file</label>
+    <input type="file" id="otaFile" accept=".bin">
+    <div class="btn-row">
+      <button class="btn btn-red" onclick="uploadOTA()">Flash Firmware</button>
+    </div>
+    <div id="otaBar"><div id="otaFill"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Test Controls</div>
+    <div class="btn-row">
+      <button class="btn btn-red"  onclick="testAll('rockets')">All LEDs — Rockets</button>
+      <button class="btn btn-grey" onclick="testAll('aircraft')">All LEDs — Aircraft</button>
+      <button class="btn btn-grey" onclick="testAll('clear')">Clear All</button>
+    </div>
+  </div>
+</div>
+
+<div class="ftr">Red Alert LED Map PWA — <span id="fwVerFtr">—</span></div>
+</div><!-- wrap -->
+
+<script src="/redalert-map/js/app.js"></script>
+<script>
+// Wire up overview panel from status data
+const _origUpdate = updateStatusUI;
+updateStatusUI = function(d) {
+  _origUpdate(d);
+  const ov = document.getElementById('overviewText');
+  if (ov) ov.innerHTML = [
+    `<b>State:</b> ${d.state}`,
+    `<b>WiFi:</b> ${d.wifi} ${d.ip ? '('+d.ip+')' : ''}`,
+    `<b>Map:</b> ${d.mapLoaded ? d.mapCities+' cities, '+d.mapLeds+' LEDs' : 'not loaded'}`,
+    `<b>Active alerts:</b> ${d.activeAlerts}`,
+    `<b>Poll:</b> ${d.pollMsg}`,
+    `<b>OK polls:</b> ${d.pollOkCount} | <b>Fails</b> W:${d.wifiFails} C:${d.connFails} A:${d.apiFails}`,
+    `<b>RSSI:</b> ${d.rssi} dBm`,
+    `<b>Firmware:</b> ${d.version}`
+  ].join('<br>');
+  const fv = document.getElementById('fwVer');
+  const fvf = document.getElementById('fwVerFtr');
+  if (fv)  fv.textContent  = 'FW ' + d.version;
+  if (fvf) fvf.textContent = 'FW ' + d.version;
+};
+</script>
+</body>
+    </html>
