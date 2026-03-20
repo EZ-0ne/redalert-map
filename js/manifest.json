@@ -1,0 +1,553 @@
+// =============================================================================
+// Red Alert LED Map — PWA Application
+// Talks directly to ESP32 REST API over local network
+// =============================================================================
+
+const VERSION = '1.0.0';
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let G = {
+  deviceIP: localStorage.getItem('deviceIP') || '192.168.1.169',
+  pollInterval: null,
+  statusInterval: null,
+  lastAlertCount: 0,
+  lastState: '',
+  notifPermission: false,
+  ledCount: 0,
+  ledStates: [],         // current LED state snapshot for map visualization
+  alertHistory: [],
+  connected: false,
+  theme: localStorage.getItem('theme') || 'night',
+};
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+document.addEventListener('DOMContentLoaded', () => {
+  applyTheme(G.theme);
+  renderIPInput();
+  setupTabs();
+  startPolling();
+  requestNotifPermission();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/redalert-map/sw.js')
+      .then(() => console.log('[SW] Registered'))
+      .catch(e => console.warn('[SW] Failed:', e));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Theme
+// ---------------------------------------------------------------------------
+function applyTheme(t) {
+  G.theme = t;
+  document.documentElement.setAttribute('data-theme', t);
+  localStorage.setItem('theme', t);
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = t === 'night' ? '☀ Day' : '🌙 Night';
+}
+
+function toggleTheme() {
+  applyTheme(G.theme === 'night' ? 'day' : 'night');
+}
+
+// ---------------------------------------------------------------------------
+// Device IP management
+// ---------------------------------------------------------------------------
+function renderIPInput() {
+  const el = document.getElementById('deviceIP');
+  if (el) el.value = G.deviceIP;
+}
+
+function setDeviceIP() {
+  const val = document.getElementById('deviceIP').value.trim();
+  if (val) {
+    G.deviceIP = val;
+    localStorage.setItem('deviceIP', val);
+    showToast('Device IP updated — reconnecting...');
+    fetchStatus();
+  }
+}
+
+function apiURL(path) {
+  return `http://${G.deviceIP}${path}`;
+}
+
+// ---------------------------------------------------------------------------
+// Polling
+// ---------------------------------------------------------------------------
+function startPolling() {
+  fetchStatus();
+  G.statusInterval = setInterval(fetchStatus, 3000);
+}
+
+async function fetchStatus() {
+  try {
+    const r = await fetch(apiURL('/status'), { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    G.connected = true;
+    G.ledCount  = d.mapLeds || 0;
+    updateStatusUI(d);
+    checkForAlerts(d);
+    updateSettingsUI(d);
+  } catch (e) {
+    G.connected = false;
+    updateConnectionBadge(false, e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Alert notification
+// ---------------------------------------------------------------------------
+function checkForAlerts(d) {
+  const count = d.activeAlerts || 0;
+  if (count > G.lastAlertCount && G.lastAlertCount === 0) {
+    // New alert started
+    fireNotification('🚨 Red Alert!', `${count} active alert${count>1?'s':''} — check the map`);
+  }
+  G.lastAlertCount = count;
+  G.lastState = d.state;
+}
+
+async function requestNotifPermission() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'granted') {
+    G.notifPermission = true; return;
+  }
+  if (Notification.permission !== 'denied') {
+    const p = await Notification.requestPermission();
+    G.notifPermission = (p === 'granted');
+  }
+}
+
+function fireNotification(title, body) {
+  if (!G.notifPermission) return;
+  if (document.visibilityState === 'visible') return; // don't notify if app is open
+  new Notification(title, {
+    body,
+    icon: '/redalert-map/icons/icon-192.png',
+    tag: 'redalert',
+    renotify: true
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Status UI
+// ---------------------------------------------------------------------------
+function updateStatusUI(d) {
+  // State badge
+  const stateBadge = document.getElementById('sb-state');
+  if (stateBadge) {
+    stateBadge.textContent = `STATE: ${(d.state||'?').toUpperCase()}`;
+    stateBadge.className = 'badge ' + {
+      idle: 'b-idle', alert: 'b-alert', boot: 'b-boot',
+      disconnected: 'b-disc', ota: 'b-ota'
+    }[d.state] || 'b-boot';
+  }
+  setBadge('sb-wifi',  d.wifi === 'connected' ? `WiFi: ${d.ssid}` : 'WiFi: disconnected',
+           d.wifi === 'connected' ? 'b-ok' : 'b-err');
+  setBadge('sb-ip',    `IP: ${d.ip || '—'}`);
+  setBadge('sb-ntp',   `NTP: ${d.ntpSynced ? 'synced' : 'not synced'}`,
+           d.ntpSynced ? 'b-ok' : 'b-warn');
+  setBadge('sb-rssi',  `RSSI: ${d.rssi || '—'} dBm`);
+
+  // Poll bar
+  setBadge('pb-api',   `API: ${d.pollMsg || '—'}`);
+  setBadge('pb-ok',    `OK: ${d.pollOkCount || 0} polls`);
+  setBadge('pb-fails', `Fails — W:${d.wifiFails||0} C:${d.connFails||0} A:${d.apiFails||0}`);
+
+  // Map info
+  setBadge('sb-map',
+    d.mapLoaded ? `Map: ${d.mapCities} cities / ${d.mapLeds} LEDs` : 'Map: not loaded',
+    d.mapLoaded ? 'b-ok' : 'b-warn');
+
+  // Clock
+  updateClock(d.nowSec, d.ntpSynced);
+
+  // Connection indicator
+  updateConnectionBadge(true);
+
+  // Update LED map if on that tab
+  if (document.getElementById('tab-map')?.classList.contains('act')) {
+    updateLEDMap(d);
+  }
+}
+
+function updateConnectionBadge(ok, msg) {
+  const el = document.getElementById('sb-conn');
+  if (!el) return;
+  el.textContent = ok ? '● Connected' : `● ${msg || 'Offline'}`;
+  el.className = 'badge ' + (ok ? 'b-ok' : 'b-err');
+}
+
+function setBadge(id, text, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  if (cls) el.className = 'badge ' + cls;
+}
+
+// ---------------------------------------------------------------------------
+// Clock
+// ---------------------------------------------------------------------------
+let clockBase = 0, clockSet = false;
+function updateClock(nowSec, synced) {
+  if (synced && nowSec) { clockBase = nowSec; clockSet = true; }
+  if (!clockSet) return;
+  const el = document.getElementById('clock');
+  if (!el) return;
+  const s = Math.floor(Date.now()/1000) % 86400;
+  const diff = s - (clockBase % 86400);
+  let t = (clockBase + diff + 86400) % 86400;
+  const h = Math.floor(t/3600) % 12 || 12;
+  const m = String(Math.floor((t%3600)/60)).padStart(2,'0');
+  const sec = String(t%60).padStart(2,'0');
+  const ampm = Math.floor(t/3600) < 12 ? 'AM' : 'PM';
+  el.textContent = `${h}:${m}:${sec} ${ampm}`;
+}
+setInterval(() => { if(clockSet) updateClock(null, false); }, 1000);
+
+// ---------------------------------------------------------------------------
+// Settings UI — populate from status
+// ---------------------------------------------------------------------------
+function updateSettingsUI(d) {
+  setVal('alertDur',   d.alertDur);
+  setVal('pollInt',    d.pollInterval);
+  setVal('blinkSpd',   d.blinkSpeed);
+  setVal('sysBri',     d.sysBri);
+  setVal('nightBri',   d.nightBri);
+  setVal('idleBri',    d.idleBri);
+  setVal('ssid',       d.ssid);
+  setVal('solidCitiesHidden', JSON.stringify(d.solidCities || []));
+  // Brightness mode buttons
+  [0,1,2].forEach(i => {
+    const b = document.getElementById(`bm-${i}`);
+    if (b) b.classList.toggle('act', d.brightMode == i);
+  });
+  // Notif / speaker
+  setChecked('notifEnabled',   d.notifEnabled);
+  setChecked('speakerEnabled', d.speakerEnabled);
+  setVal('notifCount', d.notifCount);
+  // Solid cities chips
+  renderSolidCities(d.solidCities || []);
+}
+
+function setVal(id, val) {
+  const el = document.getElementById(id);
+  if (el && val !== undefined && val !== null) el.value = val;
+}
+function setChecked(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.checked = !!val;
+}
+
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+function setupTabs() {
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.tab;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('act'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+      tab.classList.add('act');
+      document.getElementById(`panel-${target}`)?.classList.remove('hidden');
+      if (target === 'history') loadAlertHistory();
+      if (target === 'log')     loadLogs();
+      if (target === 'map')     fetchStatus();
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// LED Map visualization
+// ---------------------------------------------------------------------------
+function updateLEDMap(d) {
+  const container = document.getElementById('ledGrid');
+  if (!container) return;
+  const n = d.mapLeds || 0;
+  if (n === 0) { container.innerHTML = '<div class="no-map">No map loaded</div>'; return; }
+
+  // Build grid if size changed
+  if (container.children.length !== n) {
+    container.innerHTML = '';
+    for (let i = 0; i < n; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'led-cell';
+      cell.title = `LED ${i}`;
+      cell.dataset.idx = i;
+      cell.addEventListener('click', () => testLED(i));
+      container.appendChild(cell);
+    }
+  }
+
+  // Color cells based on alert state — we don't have per-LED state from /status
+  // so we show active/idle based on activeAlerts count
+  const isAlert = d.state === 'alert';
+  const cells = container.querySelectorAll('.led-cell');
+  cells.forEach((cell, i) => {
+    cell.className = 'led-cell ' + (
+      d.state === 'disconnected' ? 'led-disc' :
+      d.state === 'ota'          ? 'led-ota'  :
+      isAlert                    ? 'led-idle' : 'led-idle'
+    );
+  });
+}
+
+async function testLED(idx) {
+  try {
+    const r = await fetch(apiURL(`/test?led=${idx}`));
+    showToast(await r.text());
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Alert history
+// ---------------------------------------------------------------------------
+async function loadAlertHistory() {
+  const el = document.getElementById('historyList');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const r = await fetch(apiURL('/alerthistory'));
+    const data = await r.json();
+    if (!data.length) { el.innerHTML = '<div class="empty">No alerts recorded yet</div>'; return; }
+    el.innerHTML = data.reverse().map(entry => `
+      <div class="hist-row">
+        <span class="hist-type threat-${entry.threat}">${entry.type || 'Alert'}</span>
+        <span class="hist-city">${entry.city || '—'}</span>
+        <span class="hist-led">LED ${entry.led ?? '—'}</span>
+      </div>`).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="error">Could not load history: ${e.message}</div>`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Logs
+// ---------------------------------------------------------------------------
+async function loadLogs() {
+  loadLog('syslog',   '/syslog',   'syslogBox');
+  loadLog('alertlog', '/log',      'alertlogBox');
+}
+
+async function loadLog(name, path, boxId) {
+  const el = document.getElementById(boxId);
+  if (!el) return;
+  try {
+    const r = await fetch(apiURL(path));
+    el.textContent = await r.text();
+    el.scrollTop = el.scrollHeight;
+  } catch(e) {
+    el.textContent = `Error loading ${name}: ${e.message}`;
+  }
+}
+
+async function clearLog(which) {
+  if (!confirm(`Clear ${which}?`)) return;
+  const path = which === 'syslog' ? '/clearsyslog' :
+               which === 'alertlog' ? '/clearalertlog' : '/clearalerthist';
+  try {
+    await fetch(apiURL(path));
+    showToast(`${which} cleared`);
+    loadLogs();
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Settings save
+// ---------------------------------------------------------------------------
+async function saveSettings() {
+  const fd = new FormData();
+  fd.append('action', 'settings');
+  fd.append('alertDur',       getVal('alertDur'));
+  fd.append('pollInt',        getVal('pollInt'));
+  fd.append('blinkSpd',       getVal('blinkSpd'));
+  fd.append('sysBri',         getVal('sysBri'));
+  fd.append('nightBri',       getVal('nightBri'));
+  fd.append('idleBri',        getVal('idleBri'));
+  fd.append('brightMode',     getActiveBrightMode());
+  fd.append('notifEnabled',   getChecked('notifEnabled'));
+  fd.append('speakerEnabled', getChecked('speakerEnabled'));
+  fd.append('notifCount',     getVal('notifCount'));
+  try {
+    const r = await fetch(apiURL('/save'), { method: 'POST', body: fd });
+    showToast(await r.text());
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+async function saveWifi() {
+  const fd = new FormData();
+  fd.append('action', 'wifi');
+  fd.append('ssid', getVal('ssid'));
+  fd.append('pass', getVal('wifiPass'));
+  try {
+    const r = await fetch(apiURL('/save'), { method: 'POST', body: fd });
+    showToast(await r.text());
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+function getVal(id) {
+  return document.getElementById(id)?.value || '';
+}
+function getChecked(id) {
+  return document.getElementById(id)?.checked ? 'true' : 'false';
+}
+function getActiveBrightMode() {
+  for (let i=0;i<3;i++) {
+    if (document.getElementById(`bm-${i}`)?.classList.contains('act')) return i;
+  }
+  return 2;
+}
+function setBrightMode(n) {
+  [0,1,2].forEach(i => document.getElementById(`bm-${i}`)?.classList.toggle('act', i===n));
+}
+
+// ---------------------------------------------------------------------------
+// Solid cities
+// ---------------------------------------------------------------------------
+function renderSolidCities(cities) {
+  const el = document.getElementById('solidChips');
+  if (!el) return;
+  el.innerHTML = cities.map(c => `
+    <div class="chip">
+      ${c}
+      <span class="chip-x" onclick="removeSolidCity('${c}')">×</span>
+    </div>`).join('') || '<span style="color:var(--txt3);font-size:13px">None added</span>';
+}
+
+async function addSolidCity() {
+  const city = getVal('solidCityInput').trim();
+  if (!city) return;
+  const fd = new FormData();
+  fd.append('action', 'add');
+  fd.append('heb', city);
+  try {
+    const r = await fetch(apiURL('/solidcities'), { method: 'POST', body: fd });
+    const d = await r.json();
+    showToast(d.msg || (d.ok ? 'Added' : 'Failed'));
+    if (d.ok) fetchStatus();
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+async function removeSolidCity(city) {
+  const fd = new FormData();
+  fd.append('action', 'remove');
+  fd.append('heb', city);
+  try {
+    await fetch(apiURL('/solidcities'), { method: 'POST', body: fd });
+    fetchStatus();
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// City search autocomplete
+// ---------------------------------------------------------------------------
+let acTimer = null;
+function citySearchInput(val) {
+  clearTimeout(acTimer);
+  if (val.length < 2) { closeAC(); return; }
+  acTimer = setTimeout(() => fetchCities(val), 300);
+}
+
+async function fetchCities(q) {
+  try {
+    const r = await fetch(apiURL(`/cities?q=${encodeURIComponent(q)}`));
+    const data = await r.json();
+    showAC(data);
+  } catch(e) { closeAC(); }
+}
+
+function showAC(cities) {
+  const drop = document.getElementById('cityDrop');
+  if (!drop) return;
+  if (!cities.length) { drop.style.display='none'; return; }
+  drop.innerHTML = cities.map(c =>
+    `<div class="ac-item" onclick="selectCity('${c.h}','${c.e}')">${c.h} <span style="color:var(--txt3)">${c.e}</span></div>`
+  ).join('');
+  drop.style.display = 'block';
+}
+
+function selectCity(heb, eng) {
+  document.getElementById('solidCityInput').value = heb;
+  closeAC();
+}
+function closeAC() {
+  const drop = document.getElementById('cityDrop');
+  if (drop) drop.style.display = 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Test controls
+// ---------------------------------------------------------------------------
+async function testAll(mode) {
+  try {
+    const r = await fetch(apiURL(`/testall?mode=${mode}`));
+    showToast(await r.text());
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+async function reboot() {
+  if (!confirm('Reboot the device?')) return;
+  try {
+    await fetch(apiURL('/reboot'));
+    showToast('Rebooting...');
+  } catch(e) { showToast('Reboot sent'); }
+}
+
+// ---------------------------------------------------------------------------
+// Map upload
+// ---------------------------------------------------------------------------
+async function uploadMap() {
+  const file = document.getElementById('mapFile')?.files[0];
+  if (!file) { showToast('Select a .bin file first'); return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  showToast('Uploading map...');
+  try {
+    const r = await fetch(apiURL('/uploadmap'), { method: 'POST', body: fd });
+    showToast(await r.text());
+    fetchStatus();
+  } catch(e) { showToast('Error: ' + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// OTA
+// ---------------------------------------------------------------------------
+async function uploadOTA() {
+  const file = document.getElementById('otaFile')?.files[0];
+  if (!file) { showToast('Select a firmware .bin first'); return; }
+  if (!confirm('Flash new firmware to device?')) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  const bar = document.getElementById('otaBar');
+  const fill = document.getElementById('otaFill');
+  if (bar) bar.style.display = 'block';
+  showToast('Flashing firmware — do not close this page...');
+  try {
+    const r = await fetch(apiURL('/ota'), { method: 'POST', body: fd });
+    if (fill) fill.style.width = '100%';
+    showToast(await r.text());
+  } catch(e) {
+    showToast('OTA sent — device may be rebooting');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Toast notifications
+// ---------------------------------------------------------------------------
+function showToast(msg) {
+  let toast = document.getElementById('toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.className = 'toast show';
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => toast.classList.remove('show'), 3000);
+    }
